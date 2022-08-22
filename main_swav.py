@@ -33,6 +33,8 @@ from src.utils import (
 from src.multicropdataset import MultiCropDataset
 import src.resnet50 as resnet_models
 
+import wandb
+
 logger = getLogger()
 
 parser = argparse.ArgumentParser(description="Implementation of SwAV")
@@ -119,6 +121,34 @@ parser.add_argument("--dump_path", type=str, default=".",
                     help="experiment dump path for checkpoints and log")
 parser.add_argument("--seed", type=int, default=31, help="seed")
 
+#########################
+##### wandb logging  ####
+#########################
+parser.add_argument("--project", default="project", type=str, help="wandb project")
+parser.add_argument("--name", default="exp", type=str, help="wandb name")
+
+
+def log_wandb_config(args):
+    wandb.config = {
+        "nmb_crops": nmb_crops,
+        "size_crops": size_crops,
+        "min_scale_crops": min_scale_crops,
+        "max_scale_crops": max_scale_crops,
+        "epsilon": epsilon,
+        "temperature": temperature,
+        "nmb_prototypes": nmb_prototypes,
+        "queue_length": queue_length,
+        "epoch_queue_starts": epoch_queue_starts,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "base_lr": base_lr,
+        "final_lr": final_lr,
+        "freeze_prototypes_n_iters": freeze_prototypes_n_iters,
+        "warmup_epochs": warmup_epochs,
+        "seed": seed
+    }
+
+
 
 def main():
     global args
@@ -126,7 +156,7 @@ def main():
     init_distributed_mode(args)
     fix_random_seeds(args.seed)
     logger, training_stats = initialize_exp(args, "epoch", "loss")
-
+    
     # build data
     train_dataset = MultiCropDataset(
         args.data_path,
@@ -213,6 +243,9 @@ def main():
     args.queue_length -= args.queue_length % (args.batch_size * args.world_size)
 
     cudnn.benchmark = True
+    
+    wandb.init(project=args.project, name=args.name)
+    log_wandb_config(args)
 
     for epoch in range(start_epoch, args.epochs):
 
@@ -332,7 +365,13 @@ def train(train_loader, model, optimizer, epoch, lr_schedule, queue):
         losses.update(loss.item(), inputs[0].size(0))
         batch_time.update(time.time() - end)
         end = time.time()
+        
+        if args.rank ==0:
+            wandb.log({"loss": losses.val})
+            wandb.log({"loss_avg": losses.avg})
+            wandb.log({"lr": optimizer.optim.param_groups[0]["lr"]})
         if args.rank ==0 and it % 50 == 0:
+            wandb.log({"loss_per_iter": losses})
             logger.info(
                 "Epoch: [{0}][{1}]\t"
                 "Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
